@@ -235,6 +235,11 @@ class _ItemRow(ctk.CTkFrame):
         self._speed_lbl.configure(text=item.speed or "")
         self._eta_lbl.configure(text=f"ETA {item.eta}" if item.eta and item.eta != "—" else "")
 
+        if item.status == DownloadItem.STATUS_ERROR:
+            self._url_lbl.configure(text=f"Error: {item.error}", text_color="#f43f5e")
+        else:
+            self._url_lbl.configure(text=item.url[:65], text_color="#475569")
+
         # Progress bar color custom mapping
         bar_colors = {
             DownloadItem.STATUS_DONE:        "#10b981",
@@ -394,9 +399,12 @@ class _PlaylistRow(ctk.CTkFrame):
         )
 
         # Current video sub-row
-        cur_title = job.current_video_title
-        if cur_title:
-            self._cur_title.configure(text=cur_title[:80])
+        if job.status == PlaylistJob.STATUS_ERROR:
+            self._cur_title.configure(text=f"Error: {getattr(job, 'error', 'Unknown error')}", text_color="#f43f5e")
+        else:
+            cur_title = job.current_video_title
+            if cur_title:
+                self._cur_title.configure(text=cur_title[:80], text_color="#cbd5e1")
         self._cur_bar.set(max(0, min(1, job.current_video_percent / 100)))
         self._cur_pct.configure(text=f"{job.current_video_percent:.0f}%")
         spd = job.current_video_speed

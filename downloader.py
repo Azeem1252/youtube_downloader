@@ -119,6 +119,34 @@ def _is_network_error(exc: Exception) -> bool:
     return any(kw in msg for kw in _NET_KEYWORDS)
 
 
+def _clean_error_message(exc: Exception) -> str:
+    """Format a clean, readable error message from a yt-dlp exception."""
+    msg = str(exc).strip()
+    
+    # Traceback removal heuristic: if we have multiple lines, look for common patterns
+    lines = [line.strip() for line in msg.splitlines() if line.strip()]
+    if not lines:
+        return "Unknown error"
+        
+    # Search for lines starting with "ERROR:"
+    err_lines = [l for l in lines if l.startswith("ERROR:") or l.startswith("error:")]
+    if err_lines:
+        msg = err_lines[0]
+    else:
+        # Otherwise, take the last line if it doesn't look like a traceback line
+        last_line = lines[-1]
+        if "traceback" not in last_line.lower() and "file " not in last_line.lower():
+            msg = last_line
+            
+    # Clean up standard prefixes
+    # Remove "ERROR: " or "error: " prefix case-insensitively
+    msg = re.sub(r'^(error|ERROR):\s*', '', msg)
+    # Remove extractor prefix like "[youtube] <video_id>: "
+    msg = re.sub(r'^\[[^\]]+\]\s+[^:]+:\s*', '', msg)
+    
+    return msg
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DownloadItem  —  represents one queued download job
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,6 +215,7 @@ class PlaylistJob:
         self.percent      = 0.0         # overall playlist progress
         self.current_item: Optional[DownloadItem] = None
         self.archive_path = ""          # written by yt-dlp; persists between runs
+        self.error        = ""
         self._cancel      = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -302,6 +331,12 @@ def build_ydl_opts(
     """Build a valid yt-dlp options dict."""
 
     is_audio = fmt in AUDIO_FORMATS
+
+    # Ensure output directory exists before download
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except Exception as e:
+        print(f"[Downloader] Warning: Could not create output directory '{output_dir}': {e}")
 
     # Output template
     if organize_by_channel:
@@ -521,7 +556,7 @@ def download_item(
 
             # Real error (not connectivity)
             item.status = DownloadItem.STATUS_ERROR
-            item.error  = str(exc)
+            item.error  = _clean_error_message(exc)
             print(f"[Downloader] Error on '{item.title}': {exc}")
             break
 
@@ -588,6 +623,7 @@ def run_playlist_job(
         info = fetch_info(job.url, ffmpeg_path=ffmpeg_loc, cookies_browser=cookies_browser, proxy=proxy)
     except Exception as exc:
         job.status = PlaylistJob.STATUS_ERROR
+        job.error = _clean_error_message(exc)
         if on_complete:
             on_complete(job)
         return

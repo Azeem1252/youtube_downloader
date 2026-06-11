@@ -13,6 +13,8 @@ import os
 from typing import Optional
 
 # Cache the resolved path so we don't re-check every call
+_cache_initialized = False
+_last_checked_custom_path: Optional[str] = None
 _resolved_ffmpeg_path: Optional[str] = None
 _resolved_ffprobe_path: Optional[str] = None
 
@@ -53,26 +55,45 @@ def resolve_ffmpeg(custom_path: str = "") -> Optional[str]:
       3. imageio-ffmpeg bundled binary
     Returns None if all fail.
     """
-    global _resolved_ffmpeg_path
+    global _resolved_ffmpeg_path, _last_checked_custom_path, _cache_initialized
 
-    # 1. Custom path
+    custom_path = custom_path.strip('\'" \t')
+
+    # If the custom path is a directory, try to locate ffmpeg inside it or its bin/ subfolder
+    if custom_path and os.path.isdir(custom_path):
+        found = False
+        for name in ("ffmpeg.exe", "ffmpeg"):
+            p1 = os.path.join(custom_path, name)
+            if os.path.isfile(p1) and _try_run(p1):
+                custom_path = p1
+                found = True
+                break
+            p2 = os.path.join(custom_path, "bin", name)
+            if os.path.isfile(p2) and _try_run(p2):
+                custom_path = p2
+                found = True
+                break
+        if not found:
+            pass
+
+    if _cache_initialized and _last_checked_custom_path == custom_path:
+        return _resolved_ffmpeg_path
+
+    # Perform resolution
+    resolved = None
     if custom_path and _try_run(custom_path):
-        _resolved_ffmpeg_path = custom_path
-        return custom_path
+        resolved = custom_path
+    elif _try_run("ffmpeg"):
+        resolved = "ffmpeg"
+    else:
+        bundled = _get_imageio_ffmpeg_path()
+        if bundled and _try_run(bundled):
+            resolved = bundled
 
-    # 2. System PATH
-    if _try_run("ffmpeg"):
-        _resolved_ffmpeg_path = "ffmpeg"
-        return "ffmpeg"
-
-    # 3. imageio-ffmpeg bundled binary
-    bundled = _get_imageio_ffmpeg_path()
-    if bundled and _try_run(bundled):
-        _resolved_ffmpeg_path = bundled
-        return bundled
-
-    _resolved_ffmpeg_path = None
-    return None
+    _last_checked_custom_path = custom_path
+    _resolved_ffmpeg_path = resolved
+    _cache_initialized = True
+    return resolved
 
 
 def get_ffmpeg_version(ffmpeg_path: str = "") -> Optional[str]:
@@ -93,30 +114,43 @@ def ffmpeg_status_message(ffmpeg_path: str = "") -> tuple[bool, str]:
     Returns (available: bool, message: str) for UI display.
     Detects the source of FFmpeg and reports it clearly.
     """
-    # Custom path
-    if ffmpeg_path and _try_run(ffmpeg_path):
-        version = _try_run(ffmpeg_path)
-        return True, f"[OK] Custom path: {version}"
+    resolved = resolve_ffmpeg(ffmpeg_path)
+    if not resolved:
+        return False, (
+            "[!] FFmpeg not detected yet -- imageio-ffmpeg will attempt to download it automatically "
+            "on first use.\n"
+            "If downloads fail, install manually:\n"
+            "  Windows:  winget install ffmpeg\n"
+            "  URL:      https://ffmpeg.org/download.html"
+        )
 
-    # System PATH
-    sys_ver = _try_run("ffmpeg")
-    if sys_ver:
-        return True, f"[OK] System: {sys_ver}"
+    version = _try_run(resolved) or "unknown version"
+    cleaned_path = ffmpeg_path.strip('\'" \t')
 
-    # imageio-ffmpeg bundled
+    if cleaned_path:
+        is_custom = False
+        if os.path.isdir(cleaned_path):
+            try:
+                # Check if resolved file is inside the cleaned_path directory
+                p_cleaned = os.path.abspath(cleaned_path)
+                p_resolved = os.path.abspath(resolved)
+                is_custom = os.path.commonpath([p_cleaned, p_resolved]) == os.path.commonpath([p_cleaned])
+            except Exception:
+                pass
+        else:
+            is_custom = (os.path.abspath(resolved) == os.path.abspath(cleaned_path))
+
+        if is_custom:
+            return True, f"[OK] Custom path: {version}\nResolved binary: {resolved}"
+
+    if resolved == "ffmpeg":
+        return True, f"[OK] System: {version}"
+
     bundled = _get_imageio_ffmpeg_path()
-    if bundled:
-        bundled_ver = _try_run(bundled)
-        if bundled_ver:
-            return True, f"[OK] Auto-bundled (imageio-ffmpeg): {bundled_ver}"
+    if bundled and resolved == bundled:
+        return True, f"[OK] Auto-bundled (imageio-ffmpeg): {version}\nPath: {resolved}"
 
-    return False, (
-        "[!] FFmpeg not detected yet -- imageio-ffmpeg will attempt to download it automatically "
-        "on first use.\n"
-        "If downloads fail, install manually:\n"
-        "  Windows:  winget install ffmpeg\n"
-        "  URL:      https://ffmpeg.org/download.html"
-    )
+    return True, f"[OK] FFmpeg: {version}\nPath: {resolved}"
 
 
 def get_ffmpeg_location_for_ytdlp(custom_path: str = "") -> Optional[str]:
