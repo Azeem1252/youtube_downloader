@@ -1,0 +1,5 @@
+yt-dlp
+customtkinter
+Pillow
+requests
+imageio-ffmpeg       # Auto-downloads FFmpeg binaries — no manual install needed
