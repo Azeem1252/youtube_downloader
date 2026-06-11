@@ -64,11 +64,9 @@ class ConnectivityMonitor:
         with self._lock:
             return self._connected
 
-    def wait_for_connection(self, poll_interval: float = 1.0) -> None:
+    def wait_for_connection(self) -> None:
         """Block the calling thread until internet is reachable."""
-        while not self.is_connected:
-            self._restore_event.wait(timeout=poll_interval)
-            self._restore_event.clear()
+        self._restore_event.wait()
 
     # ── Internal ──────────────────────────────────────────────────────
     def _probe(self) -> bool:
